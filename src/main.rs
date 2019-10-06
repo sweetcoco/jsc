@@ -1,29 +1,40 @@
-#[derive(Debug)]
-struct ParserState<T> {
+trait Parse {
+    fn parse(&self, parser_state: ParserState) -> ParserState;
+}
+
+#[derive(Debug, Clone)]
+struct ParserState {
     target_string: String,
-    result: Option<T>,
+    result: Option<ParserStateResult>,
     index: usize,
     error: Option<String>,
     is_error: bool
 }
 
-impl ParserState<String> {
-    fn to_vec_type(&self) -> ParserState<Vec<String>> {
-        let uresult: String = self.result.clone().unwrap();
-
-        return ParserState {
-            target_string: self.target_string.clone(),
-            result: Some(vec![uresult]),
-            index: self.index,
-            error: self.error.clone(),
-            is_error: self.is_error
-        }
-    }
+#[derive(Debug, Clone)]
+enum ParserStateResult {
+    String(StringResult),
+    Sequence(SequenceResult),
+    None
 }
 
-fn string_parser (string: String) -> impl FnOnce(ParserState<String>) -> ParserState<String> {
-    return move |parser_state| {
+#[derive(Debug, Clone)]
+struct StringResult {
+    result: String
+}
 
+#[derive(Debug, Clone)]
+struct SequenceResult {
+    result: Vec<ParserStateResult>
+}
+
+#[derive(Debug)]
+struct StringParser {
+    string: String
+}
+
+impl Parse for StringParser {
+    fn parse(&self, parser_state: ParserState) -> ParserState {
         if parser_state.is_error {
             return parser_state;
         }
@@ -34,28 +45,28 @@ fn string_parser (string: String) -> impl FnOnce(ParserState<String>) -> ParserS
         if sliced_target.len() == 0 {
             return ParserState {
                 target_string,
-                error: Some(format!("string_parser: Tried to match {}, but got unexpected end of input.", string)),
+                error: Some(format!("string_parser: Tried to match {}, but got unexpected end of input.", &self.string)),
                 is_error: true,
                 ..parser_state
             }
         }
 
-        let new_index = index + string.len();
+        let new_index = index + self.string.len();
 
-        if sliced_target.starts_with(&string) {
+        if sliced_target.starts_with(&self.string) {
             return ParserState {
                 target_string,
-                result: Option::Some(string),
+                result: Option::Some(self.format_result(self.string.to_owned())),
                 index: new_index,
                 ..parser_state
             };
         }
 
-        let error = Some(format!("Tried to match \"{}\", but got \"{}\"", string, target_string));
+        let error = Some(format!("Tried to match \"{}\", but got \"{}\"", &self.string, target_string));
 
         return ParserState {
                 target_string,
-                result: Option::Some(string),
+                result: Option::Some(self.format_result(self.string.to_owned())),
                 index: index,
                 error: error,
                 is_error: true
@@ -63,41 +74,81 @@ fn string_parser (string: String) -> impl FnOnce(ParserState<String>) -> ParserS
     }
 }
 
-fn main() {
+impl StringParser {
+    fn new(string: String) -> Self {
+        StringParser {
+            string
+        }
+    }
 
-    let string1 = String::from("hello");
-    let string2 = String::from("goodbye");
-    
-    // get parser for a single string:
-    // let parser = string_parser(string1);
-    //
-    // run parser for single string
-    // println!("{:#?}", run(parser, String::from("hello")));
+    fn run(&self, target_string: String) -> ParserState {
+        let initial_state = get_initial_state(target_string);
+        return self.parse(initial_state);
+    }
 
-    // parse a sequence of parsers
-    let parser = sequence_of(vec![string_parser(string1), string_parser(string2)]);
-    println!("{:#?}", run_sequence(parser, String::from("hellogoodbye")));
+    fn format_result(&self, result: String) -> ParserStateResult {
+        ParserStateResult::String(StringResult {
+            result
+        })
+    }
 }
 
-fn sequence_of(parsers: Vec<impl FnOnce(ParserState<String>) -> ParserState<String>>) -> impl FnOnce(ParserState<String>) -> ParserState<Vec<String>> {
-    return move |parser_state| {
+// #[derive(Debug)]
+struct SequenceOfParser {
+    parsers: Vec<Box<dyn Parse>>
+}
+
+impl SequenceOfParser {
+    fn new(parsers: Vec<Box<dyn Parse>>) -> Self {
+        SequenceOfParser {
+            parsers
+        }
+    }
+
+    fn run(&self, target_string: String) -> ParserState {
+        let initial_state = get_initial_state(target_string);
+        return self.parse(initial_state);
+    }
+
+    fn format_result(&self, result: Vec<ParserStateResult>) -> ParserStateResult {
+        ParserStateResult::Sequence(SequenceResult {
+            result
+        })
+    }
+}
+
+impl Parse for SequenceOfParser {
+    fn parse(&self, parser_state: ParserState) -> ParserState {
 
         if parser_state.is_error {
-            return parser_state.to_vec_type();
+            return parser_state;
         }
 
-        let mut results: Vec<String> = Vec::new();
+        let mut results: Vec<ParserStateResult> = Vec::new();
         let mut next_state = parser_state;
-        
-        for parser in parsers {
-            next_state = parser(next_state);
+        let parsers_iter = self.parsers.iter();
+        for parser in parsers_iter {
+            let next_state_clone = next_state.clone();
+            next_state = parser.parse(next_state_clone);
             let result_option = next_state.result.clone();
-            let result = result_option.unwrap_or(String::from(""));
+            let result = match result_option {
+                None => ParserStateResult::None,
+                Some(r) => r
+            };
+
+
+            // match checked_division(dividend, divisor) {
+            //     None => println!("{} / {} failed!", dividend, divisor),
+            //     Some(quotient) => {
+            //         println!("{} / {} = {}", dividend, divisor, quotient)
+            //     },
+            // }
+
             results.push(result);
         }
 
         return ParserState {
-            result: Some(results),
+            result: Some(self.format_result(results)),
             target_string: next_state.target_string,
             index: next_state.index,
             error: next_state.error,
@@ -106,17 +157,16 @@ fn sequence_of(parsers: Vec<impl FnOnce(ParserState<String>) -> ParserState<Stri
     }
 }
 
-fn run(parser: impl FnOnce(ParserState<String>) -> ParserState<String>, target_string: String) -> ParserState<String> {
-    let initial_state = get_initial_state(target_string);
-    return parser(initial_state);
+fn main() {
+    let string1 = String::from("hello");
+    let string2 = String::from("goodbye");
+    // let parser = StringParser::new(string1);
+    let parser = SequenceOfParser::new(vec![Box::new(StringParser::new(string1)), Box::new(StringParser::new(string2))]);
+
+    println!("{:#?}", parser.run(String::from("hello")));
 }
 
-fn run_sequence(parser: impl FnOnce(ParserState<String>) -> ParserState<Vec<String>>, target_string: String) -> ParserState<Vec<String>> {
-    let initial_state = get_initial_state(target_string);
-    return parser(initial_state);
-}
-
-fn get_initial_state(target_string: String) -> ParserState<String> {
+fn get_initial_state(target_string: String) -> ParserState {
     let initial_state = ParserState {
         target_string,
         result: None,
