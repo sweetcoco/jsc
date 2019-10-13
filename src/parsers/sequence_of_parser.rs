@@ -1,21 +1,17 @@
-use super::parser_traits::Parse;
+use super::parser::Parser;
+use super::parser::ParserClass;
 use super::parser_state::ParserState;
 use super::parser_state_result::ParserStateResult;
 
 pub struct SequenceOfParser {
-    parsers: Vec<Box<dyn Parse>>
+    parsers: Vec<Parser>
 }
 
 impl SequenceOfParser {
-    pub fn new(parsers: Vec<Box<dyn Parse>>) -> Self {
+    pub fn new(parsers: Vec<Parser>) -> Self {
         SequenceOfParser {
             parsers
         }
-    }
-
-    pub fn run(&self, target_string: String) -> ParserState {
-        let initial_state = ParserState::get_initial_state(target_string);
-        return self.parse(initial_state);
     }
 
     pub fn format_result(&self, result: Vec<ParserStateResult>) -> ParserStateResult {
@@ -23,7 +19,7 @@ impl SequenceOfParser {
     }
 }
 
-impl Parse for SequenceOfParser {
+impl ParserClass for SequenceOfParser {
     fn parse(&self, parser_state: ParserState) -> ParserState {
         if parser_state.is_error {
             return parser_state;
